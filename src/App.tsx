@@ -1,35 +1,103 @@
-import { createSignal } from 'solid-js'
-import solidLogo from './assets/solid.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import {
+  Navigate,
+  Route,
+  Router,
+  cache,
+  createAsync,
+  revalidate,
+  useLocation,
+} from "@solidjs/router";
+import {
+  ParentProps,
+  Switch,
+  Match,
+  createMemo,
+  createUniqueId,
+} from "solid-js";
 
-function App() {
-  const [count, setCount] = createSignal(0)
+let loggedIn = true;
+const logoutLandingPath = "unauthenticated";
+const absolute_logoutLandingPath = `/${logoutLandingPath}`;
 
+const getCurrentUserState = cache(
+  () =>
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(loggedIn), 250)),
+  "getCurrentUserState-" + createUniqueId()
+);
+
+export function App() {
   return (
-    <>
-      <div>
-        <a href="https://vitejs.dev" target="_blank">
-          <img src={viteLogo} class="logo" alt="Vite logo" />
-        </a>
-        <a href="https://solidjs.com" target="_blank">
-          <img src={solidLogo} class="logo solid" alt="Solid logo" />
-        </a>
-      </div>
-      <h1>Vite + Solid</h1>
-      <div class="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count()}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p class="read-the-docs">
-        Click on the Vite and Solid logos to learn more
-      </p>
-    </>
-  )
+    <Router root={Layout} rootLoad={() => getCurrentUserState()}>
+      {/* Logging out from this route seems to be the root cause. */}
+      <Route component={Home}>
+        <Route path="/" />
+      </Route>
+
+      {/* Logging out from this route works fine */}
+      <Route component={Home} path="/working-route" />
+      <Route path={logoutLandingPath} component={LogoutLanding} />
+    </Router>
+  );
 }
 
-export default App
+function LogoutLanding() {
+  return (
+    <div>
+      not authenticated
+      <button
+        onClick={() => {
+          loggedIn = true;
+          void revalidate(getCurrentUserState.keyFor());
+        }}
+      >
+        log in
+      </button>
+    </div>
+  );
+}
+
+function Home() {
+  return (
+    <div>
+      authenticated home page
+      <button
+        onClick={() => {
+          loggedIn = false;
+          void revalidate(getCurrentUserState.keyFor());
+        }}
+      >
+        log out
+      </button>
+    </div>
+  );
+}
+
+function Layout(props: ParentProps) {
+  const location = useLocation();
+  const userSession = createAsync(() => getCurrentUserState());
+  const authState = createMemo(() => {
+    const session = userSession();
+    return session === undefined ? "LOADING" : session ? "AUTH" : "NOT_AUTH";
+  });
+  const redirect = createMemo(() => {
+    if (authState() === "LOADING") return;
+
+    const goingToLogoutLandingPage =
+      location.pathname === absolute_logoutLandingPath;
+
+    if (authState() === "AUTH") {
+      return goingToLogoutLandingPage ? "/" : undefined;
+    } else {
+      return goingToLogoutLandingPage ? undefined : absolute_logoutLandingPath;
+    }
+  });
+
+  return (
+    <Switch fallback={<div>loading...</div>}>
+      <Match when={redirect()}>{(href) => <Navigate href={href()} />}</Match>
+      <Match when={authState() === "AUTH" || authState() === "NOT_AUTH"}>
+        {props.children}
+      </Match>
+    </Switch>
+  );
+}
